@@ -38,12 +38,12 @@ struct NodeInfo {
 unordered_map<string, NodeInfo> node_info;
 
 void genelete(std::vector<std::vector<int>> &M){
-  std::random_device rd; //乱数の[seed]を作る
-  std::mt19937 gen(rd()); //メルセンヌ・ツイスタ乱数生成器。rd() を種にして初期化。
-  std::uniform_int_distribution<int> dist(0, 100); //min〜max を 等確率で生成する分布。
+  std::random_device rd; 
+  std::mt19937 gen(rd()); 
+  std::uniform_int_distribution<int> dist(0, 100); 
   for(int i = 0; i < M.size(); i++){
     for(int j = 0; j < M[0].size(); j++){
-      M[i][j] = dist(gen); //gen が生成器、dist が分布
+      M[i][j] = dist(gen); 
     }
   }
 }
