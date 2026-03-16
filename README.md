@@ -2,7 +2,7 @@
 修論研究の内容
 
 # title
-推論高速化における静的GPU計算リソース割当て
+推論高速化に向けた静的タスク分割とGPU資源割り当て 
 
 # Objectives 
 本研究の目的は、単一GPU上で実行されるタスクグラフ処理に対して、Taskflow を基盤とし、効率の良い 
@@ -17,7 +17,77 @@ GPU 実行の効率化を図る。
 制しつつ GPU 資源を有効活用できる 計算リソース割り当て方法を確立することを本研究の目標とする。 
 
 # Background 
-修正中
+背景
+近年，AI推論は多様な情報処理基盤で利用されており，限られた計算資源のもとで高速かつ安定に実行す
+ることが強く求められている。とくに実運用環境では，単一の処理を順に実行するだけでなく，複数の演算
+や複数の推論要求を同時に扱う場面が増えており，処理全体をどのように制御するかが性能を大きく左右す
+る。こうした処理は，演算間の依存関係をもつ有向非巡回グラフ（DAG: Directed Acyclic Graph）として
+表現することで，各演算をノード，データ依存をエッジとして整理でき，並列化可能部分と逐次実行が必要
+な部分を明示的に扱える[8][9]。実際，異種計算環境における静的タスクスケジューリング研究では，DAG
+に基づいてタスクの優先度付け，割当て，実行順序を決定することが，処理全体の完了時間短縮に有効であ
+ることが示されている[9]。  
+一方で，AI推論をGPU上で実行する場合，単にDAG上の依存関係を満たすだけでは十分ではない。GPU共有
+環境では，複数の処理を同時配置すると，カーネルスケジューリング遅延，L2キャッシュ競合，電力制約に
+伴う周波数低下などにより性能干渉が発生し，推論遅延が増大することが報告されている[8]。iGniter で
+は，GPU上に複数ワークロードを共存させた際に，こうした干渉を陽に考慮しない資源割当てでは予測可能
+な性能保証が難しいことが示されている[8]。このことは，AI推論高速化において，個々の演算を高速化す
+るだけでなく，DAG全体の実行順序とGPU資源割当てを一体として設計する必要があることを示している。  
+この問題に対し，GPU上で複数カーネルを同時実行し，未利用資源を相互補完的に活用する手法が提案され
+ている。たとえば，計算資源を主に消費するカーネルとメモリ帯域を主に消費するカーネルを適切に組み合
+わせることで，GPU利用率を高めて実行時間を短縮できることが報告されている[1]。また，KeSCo は，複数
+タスクをもつGPUアプリケーションに対し，コンパイル時に依存関係を解析してカーネルの並列実行計画を
+構成する静的手法を提案しており，実行時オーバヘッドを抑えながら同時実行性を高められることを示して
+いる[4]。しかし，同時実行は常に有効ではなく，組合せや投入順序を誤ると資源競合によって重要処理の
+遅延が増大するため，依存関係と処理特性の両方を考慮した実行計画が必要となる[8][1][2]。  
+さらに，DAGに基づく静的スケジューリングは，もともと異種計算環境において重要な研究課題として扱わ
+れてきた。HEFT や CPOP に代表される手法は，DAG上の上向きランクやクリティカルパスを用いて優先度
+を決め，限られたプロセッサ群へタスクを割り当てることで，良好なスケジュール品質と低い計算量を両立
+している[9]。この考え方は，AI推論のように依存関係が明確で，同様の処理手順が繰り返し現れるワーク
+ロードに対しても有効であり，実行前にGPU上の実行順序や並列化単位を決定する基盤として有望である
+[9]。ただし，従来の静的スケジューリング研究の多くは，平均的な完了時間短縮やスループット向上を目
+的としており，GPU上での性能干渉や遅延要求の異なる処理の混在を前提とした設計までは十分に扱ってい
+ない[8][9]。  
+このようなワークロードを扱う実行基盤として，Taskflow は，タスクの依存関係をタスクグラフとして簡
+潔に表現でき，CPU/GPUを含む異種環境でも軽量に実行できるという利点を持つ[3]。また，Taskflow の GPU 
+向け実行機構である cudaFlow は，CUDA Graph を活用してGPU実行制御を事前に構築・再利用できるため，
+ホスト側オーバヘッド削減にも有効である[6]。一方で，Taskflow はタスク優先度を中核機能として十分に
+は備えておらず，重要度や遅延制約を明示的に扱う枠組みは限定的である[7]。そのため，Taskflow が表現
+する DFG 情報を活用しつつ，GPU上での並列実行単位，stream 分割，優先度設計，資源割当てを統合的に
+扱う拡張が必要である。  
+加えて，CUDA の実行モデルにも制約がある。CUDA は stream 優先度を提供するが，実行中カーネルを割り
+込まないため，優先度設定のみで厳密な遅延保証を行うことは難しい[4]。また従来，stream 単位で SM な
+どの計算資源を直接予約する仕組みは一般的ではなく，占有率制御を通じた間接的な調整に依存する必要が
+あった[4][5]。近年では Green Context により，コンテキスト単位で利用可能な SM 数を指定する仕組み
+が導入され，GPU資源の空間的分割が可能になりつつあるが，依存関係を保ちながらどの処理にどの資源を
+与えるかは依然として実行計画に委ねられる[4][5]。 
+したがって，低遅延が求められるAI推論においては，単なるカーネル同時実行や局所的な優先度制御では
+なく，DAGとして表現された推論処理全体を対象に，依存関係，性能干渉，重要度，GPU資源制約を統合的
+に考慮した静的実行計画を構築することが重要な研究課題である。特に，Taskflow が提供する DFG 情報
+を活用し，並列実行単位の構成，stream 分割，優先度設計，さらに Green Context や occupancy 制御を
+組み合わせた GPU 実行計画を設計することで，AI推論の高速化と重要処理の遅延抑制を両立できる可能性
+がある[2][3][8][9]。 
+[1] S.-Kazem Shekofteh, Hamid Noori, Mahmoud Naghibzadeh, Holger Fröning, and Hadi Sadoghi Yazdi, 
+“cCUDA: Effective Co-Scheduling of Concurrent Kernels on GPUs,” IEEE Transactions on Parallel 
+and Distributed Systems, vol. 31, no. 4, Apr. 2020. 
+[2] Zejia Lin, Zewei Mo, Xuanteng Huang, Xianwei Zhang, and Yutong Lu, “KeSCo: Compiler-based 
+Kernel Scheduling for Multi-task GPU Applications,” in 2023 IEEE 41st International Conference 
+on Computer Design (ICCD), 2023. 
+[3] Tsung-Wei Huang, Dian-Lun Lin, Chun-Xun Lin, and Yibo Lin, “Taskflow: A Lightweight Parallel 
+and Heterogeneous Task Graph Computing System,” IEEE Transactions on Parallel and Distributed 
+Systems, vol. 33, no. 6, June 2022. 
+[4] NVIDIA Corporation, “CUDA C++ Programming Guide,” CUDA Toolkit Documentation v13.1, Dec. 
+2025. 
+[5] NVIDIA Corporation, “CUDA Runtime API,” CUDA Toolkit Documentation v13.1.0, Dec. 2025. 
+[6] Taskflow Contributors, “A General-purpose Task-parallel Programming System | Taskflow 
+QuickStart,” section “Offload Tasks to a GPU,” Taskflow documentation. 
+[7] robinchrist, “Allow adding priorities to tasks,” taskflow/taskflow Issue #232, GitHub, 
+Sep. 29, 2020. 
+[8] Fei Xu, Jianian Xu, Jiabin Chen, Li Chen, Ruitao Shang, Zhi Zhou, and Fangming Liu, “iGniter: 
+Interference-Aware GPU Resource Provisioning for Predictable DNN Inference in the Cloud,” IEEE 
+Transactions on Parallel and Distributed Systems, vol. 34, no. 3, pp. 812–825, Mar. 2023. 
+[9] Haluk Topcuoglu, Salim Hariri, and Min-You Wu, “Performance-Effective and Low-Complexity 
+Task Scheduling for Heterogeneous Computing,” IEEE Transactions on Parallel and Distributed 
+Systems, vol. 13, no. 3, pp. 260–274, Mar. 2002. 
 
 # Originality/Significance 
 新規性 
